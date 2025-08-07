@@ -1,63 +1,131 @@
 import streamlit as st
-import random
-import itertools
-from collections import Counter
 from PIL import Image
+import pandas as pd
+import random
+import os
 
-# Rutas de las imágenes
-def get_card_image(card):
-    return f"images/{card}.png"
+# Ruta a la carpeta de imágenes
+CARD_IMAGES_DIR = "images"
 
-# Formato visual de carta
-def format_card(card):
-    rank_map = {'a': 'A', 'k': 'K', 'q': 'Q', 'j': 'J', 't': '10'}
-    rank = rank_map.get(card[0], card[0].upper())
-    suit = card[1]
-    return f"{rank}{suit}"
+# Listas ordenadas correctamente
+RANK_ORDER = ['a', 'k', 'q', 'j', 't', '9', '8', '7', '6', '5', '4', '3', '2']
+SUIT_ORDER = ['s', 'h', 'd', 'c']
 
-# Orden personalizado de cartas
-def card_sort_key(card):
-    order = {'a': 14, 'k': 13, 'q': 12, 'j': 11, 't': 10,
-             '9': 9, '8': 8, '7': 7, '6': 6,
-             '5': 5, '4': 4, '3': 3, '2': 2}
-    return order[card[0]]
+# Generar nombres de cartas
+CARD_LIST = [rank + suit for rank in RANK_ORDER for suit in SUIT_ORDER]
 
-# Generar baraja
-suits = ['c', 'd', 'h', 's']
-ranks = ['a', 'k', 'q', 'j', 't', '9', '8', '7', '6', '5', '4', '3', '2']
-deck = [r + s for r in ranks for s in suits]
+# Mostrar imagen de carta
+def show_card(card_code, width=80):
+    try:
+        img = Image.open(os.path.join(CARD_IMAGES_DIR, f"{card_code}.png"))
+        st.image(img, width=width)
+    except:
+        st.write(card_code.upper())
 
-# Título
+# Selector visual de cartas
+def select_card(label, excluded_cards):
+    cols = st.columns(13)
+    selected = None
+    for i, rank in enumerate(RANK_ORDER):
+        with cols[i]:
+            for suit in SUIT_ORDER:
+                card = rank + suit
+                if card in excluded_cards:
+                    st.image(os.path.join(CARD_IMAGES_DIR, f"{card}.png"), width=50)
+                else:
+                    if st.button("", key=f"{label}_{card}"):
+                        selected = card
+                    st.image(os.path.join(CARD_IMAGES_DIR, f"{card}.png"), width=50)
+    return selected
+
+# Evaluador muy simple (para mostrar estructura)
+def evaluate_hand(player_hand, help_cards, remaining_card):
+    all_combinations = []
+    for help_card in help_cards + [None]:
+        if help_card:
+            full_hand = player_hand + [help_card] + [remaining_card]
+        else:
+            full_hand = player_hand + [remaining_card]
+        full_hand_sorted = sorted(full_hand)
+        all_combinations.append(full_hand_sorted)
+    # Simulación: elegimos la mejor combinación por orden alfabético
+    return min(all_combinations)
+
+# Cálculo de equities simulando una carta restante para cada jugador
+def calculate_equities(p1, p2, help_cards, board_cards):
+    used = set(p1 + p2 + help_cards + board_cards)
+    deck = [card for card in CARD_LIST if card not in used]
+
+    p1_wins = 0
+    p2_wins = 0
+    ties = 0
+
+    for c1 in deck:
+        for c2 in deck:
+            if c1 == c2:
+                continue
+
+            hand1 = evaluate_hand(p1, help_cards, c1)
+            hand2 = evaluate_hand(p2, help_cards, c2)
+
+            if hand1 < hand2:
+                p1_wins += 1
+            elif hand2 < hand1:
+                p2_wins += 1
+            else:
+                ties += 1
+
+    total = p1_wins + p2_wins + ties
+    return {
+        "Jugador 1": f"{100 * p1_wins / total:.2f}%",
+        "Jugador 2": f"{100 * p2_wins / total:.2f}%",
+        "Empate": f"{100 * ties / total:.2f}%"
+    }
+
+# Streamlit UI
 st.title("Calculadora de Equities - Mata AA")
 
-# Selección de cartas
 st.header("Selecciona las cartas")
 
-columns = st.columns(2)
-players = {}
-used_cards = []
+selected_cards = []
 
-for i in range(2):
-    with columns[i]:
-        st.subheader(f"Jugador {i + 1}")
-        card1 = st.selectbox(f"Carta 1 (Jugador {i + 1})", sorted([c for c in deck if c not in used_cards], key=card_sort_key), key=f"p{i+1}c1")
-        used_cards.append(card1)
-        card2 = st.selectbox(f"Carta 2 (Jugador {i + 1})", sorted([c for c in deck if c not in used_cards], key=card_sort_key), key=f"p{i+1}c2")
-        used_cards.append(card2)
-        players[f"Jugador {i + 1}"] = [card1, card2]
-        st.image([get_card_image(card1), get_card_image(card2)], width=80)
+st.subheader("Jugador 1")
+p1 = []
+while len(p1) < 2:
+    card = select_card("p1", selected_cards)
+    if card and card not in selected_cards:
+        p1.append(card)
+        selected_cards.append(card)
 
-# Selección de ayudas
-st.header("Cartas de ayuda")
+st.subheader("Jugador 2")
+p2 = []
+while len(p2) < 2:
+    card = select_card("p2", selected_cards)
+    if card and card not in selected_cards:
+        p2.append(card)
+        selected_cards.append(card)
+
+st.subheader("Cartas de ayuda (elige hasta 3)")
 help_cards = []
-cols = st.columns(3)
-for i in range(3):
-    with cols[i]:
-        help_card = st.selectbox(f"Ayuda {i + 1}", sorted([c for c in deck if c not in used_cards], key=card_sort_key), key=f"help{i+1}")
-        used_cards.append(help_card)
-        help_cards.append(help_card)
-        st.image(get_card_image(help_card), width=80)
+while len(help_cards) < 3:
+    card = select_card("help", selected_cards)
+    if card and card not in selected_cards:
+        help_cards.append(card)
+        selected_cards.append(card)
 
-# Función para evaluar manos
-hand_ranks = {
-    "
+st.subheader("Cartas del board (3 ya descubiertas)")
+board_cards = []
+while len(board_cards) < 3:
+    card = select_card("board", selected_cards)
+    if card and card not in selected_cards:
+        board_cards.append(card)
+        selected_cards.append(card)
+
+if st.button("Calcular Equities"):
+    if len(p1) == 2 and len(p2) == 2 and len(help_cards) >= 0 and len(board_cards) == 3:
+        with st.spinner("Calculando..."):
+            results = calculate_equities(p1, p2, help_cards, board_cards)
+        st.success("Resultados:")
+        st.write(results)
+    else:
+        st.error("Faltan cartas por seleccionar.")

@@ -1,62 +1,102 @@
 import streamlit as st
-from treys import Card, Evaluator
+import eval7
 import os
+import random
 
-# Ruta a la carpeta donde están las imágenes de cartas
+# Configuración
+st.set_page_config(page_title="Calculadora Mata AA", layout="wide")
 CARD_IMAGES_DIR = "images"
 
-# Todas las cartas disponibles
-SUITS = ["c", "d", "h", "s"]
-RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "t", "j", "q", "k", "a"]
-ALL_CARDS = [rank + suit for rank in RANKS for suit in SUITS]
+# Orden de cartas al estilo póker
+RANKS = ["a", "k", "q", "j", "10", "9", "8", "7", "6", "5", "4", "3", "2"]
+SUITS = ["s", "h", "d", "c"]  # picas, corazones, diamantes, tréboles
 
-# Cargar imágenes
-def load_card_image(card_name):
-    path = os.path.join(CARD_IMAGES_DIR, f"{card_name}.png")
-    return path
+# Generar lista de cartas
+DECK = [rank + suit for rank in RANKS for suit in SUITS]
 
-# Selector de cartas con imágenes
-def select_card(label, excluded_cards):
-    options = [card for card in ALL_CARDS if card not in excluded_cards]
-    selected = st.selectbox(f"{label}", options, key=label)
-    st.image(load_card_image(selected), width=60)
-    return selected
+# Estado inicial
+if "selected_cards" not in st.session_state:
+    st.session_state.selected_cards = []
+if "board" not in st.session_state:
+    st.session_state.board = []
 
-st.title("Calculadora Mata AA (Versión Básica)")
-st.markdown("Selecciona las **2 cartas iniciales** para cada jugador.")
+# Función para mostrar cartas como botones
+def select_card(label):
+    st.write(label)
+    cols = st.columns(13)  # 13 columnas = 13 rangos
+    for i, rank in enumerate(RANKS):
+        for suit in SUITS:
+            card = rank + suit
+            img_path = os.path.join(CARD_IMAGES_DIR, f"{card}.png")
+            if card not in st.session_state.selected_cards:
+                if cols[i].button("", key=f"{label}_{card}"):
+                    st.session_state.selected_cards.append(card)
+                    return card
+                cols[i].image(img_path, width=50)
+    return None
 
-# Jugador 1
-st.subheader("Jugador 1")
-selected_cards = []
-p1_card1 = select_card("p1_card1", selected_cards)
-selected_cards.append(p1_card1)
-p1_card2 = select_card("p1_card2", selected_cards)
-selected_cards.append(p1_card2)
+# Función para calcular equity
+def calculate_equity(p1_cards, p2_cards, board_cards, num_simulations=5000):
+    deck = eval7.Deck()
+    # Remover cartas usadas
+    used = p1_cards + p2_cards + board_cards
+    for card in used:
+        deck.cards.remove(eval7.Card(card.upper()))
 
-# Jugador 2
-st.subheader("Jugador 2")
-p2_card1 = select_card("p2_card1", selected_cards)
-selected_cards.append(p2_card1)
-p2_card2 = select_card("p2_card2", selected_cards)
-selected_cards.append(p2_card2)
+    p1_score = 0
+    p2_score = 0
+    ties = 0
 
-# Calcular quién gana (con una carta comunitaria dummy)
-if st.button("Evaluar mano"):
-    evaluator = Evaluator()
+    for _ in range(num_simulations):
+        deck.shuffle()
+        remaining = board_cards + [str(c).lower() for c in deck.peek(5 - len(board_cards))]
 
-    board = [Card.new("2h")]  # Carta comunitaria ficticia por ahora
+        p1_hand = [eval7.Card(c.upper()) for c in p1_cards + remaining]
+        p2_hand = [eval7.Card(c.upper()) for c in p2_cards + remaining]
 
-    p1_hand = [Card.new(p1_card1), Card.new(p1_card2)]
-    p2_hand = [Card.new(p2_card1), Card.new(p2_card2)]
+        p1_val = eval7.evaluate(p1_hand)
+        p2_val = eval7.evaluate(p2_hand)
 
-    p1_score = evaluator.evaluate(board, p1_hand)
-    p2_score = evaluator.evaluate(board, p2_hand)
+        if p1_val > p2_val:
+            p1_score += 1
+        elif p2_val > p1_val:
+            p2_score += 1
+        else:
+            ties += 1
 
-    st.markdown("### Resultado:")
-    if p1_score < p2_score:
-        st.success("Gana Jugador 1")
-    elif p2_score < p1_score:
-        st.success("Gana Jugador 2")
-    else:
-        st.info("Empate")
+    total = p1_score + p2_score + ties
+    return p1_score / total, p2_score / total, ties / total
 
+# Interfaz principal
+st.title("Calculadora Mata AA - Optimizada")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.subheader("Jugador 1")
+    p1_cards = []
+    while len(p1_cards) < 2:
+        card = select_card(f"Carta {len(p1_cards)+1}")
+        if card:
+            p1_cards.append(card)
+
+with col2:
+    st.subheader("Jugador 2")
+    p2_cards = []
+    while len(p2_cards) < 2:
+        card = select_card(f"Carta {len(p2_cards)+1}")
+        if card:
+            p2_cards.append(card)
+
+with col3:
+    st.subheader("Cartas comunitarias")
+    while len(st.session_state.board) < 5:
+        card = select_card(f"Comunitaria {len(st.session_state.board)+1}")
+        if card:
+            st.session_state.board.append(card)
+
+# Calcular y mostrar equity
+if len(p1_cards) == 2 and len(p2_cards) == 2:
+    p1_eq, p2_eq, tie_eq = calculate_equity(p1_cards, p2_cards, st.session_state.board)
+    st.write(f"**Equity Jugador 1:** {p1_eq*100:.1f}%")
+    st.write(f"**Equity Jugador 2:** {p2_eq*100:.1f}%")
+    st.write(f"**Empate:** {tie_eq*100:.1f}%")

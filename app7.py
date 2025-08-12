@@ -1,23 +1,22 @@
-# app7.py
+# app7.py - Calculadora Mata AA (versión final mejorada)
 import streamlit as st
 import os
 import random
 from collections import Counter
 from itertools import permutations
 
-st.set_page_config(page_title="Calculadora Mata AA — UI mejorada", layout="wide")
+# ---------------- Config ----------------
+st.set_page_config(page_title="Calculadora Mata AA (Final)", layout="wide")
+IMAGES_DIR = "images"  # carpeta con cartas en minúscula: 'as.png','10h.png','kc.png', etc.
 
-# ---------- CONFIG ----------
-IMAGES_DIR = "images"   # carpeta con 'as.png','10h.png','kd.png', etc (minúsculas)
 RANKS = ['A','K','Q','J','10','9','8','7','6','5','4','3','2']
 SUITS = ['s','h','d','c']
 DECK = [r.lower() + s for r in RANKS for s in SUITS]
 
-# ---------- EVALUADOR (5-cartas) ----------
+# ---------- Evaluador 5-cartas (sin librerías externas) ----------
 RANK_VALUES = {'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14}
 
 def evaluate_5cards(cards):
-    """Evalúa lista de 5 cartas (formato 'ah','10h',...) -> (category, tiebreak_tuple) mayor = mejor."""
     ranks = [c[:-1].upper() for c in cards]
     suits = [c[-1] for c in cards]
     vals = [RANK_VALUES[r if r!='T' else '10'] for r in ranks]
@@ -28,7 +27,7 @@ def evaluate_5cards(cards):
     is_flush = len(set(suits)) == 1
     unique_vals = sorted(set(vals), reverse=True)
 
-    # straight detect (incl. wheel)
+    # straight detect (including wheel)
     is_straight = False
     top_straight = None
     if len(unique_vals) == 5:
@@ -39,7 +38,6 @@ def evaluate_5cards(cards):
             is_straight = True
             top_straight = 5
 
-    # categories: 9 straight flush, 8 four, 7 full, 6 flush, 5 straight, 4 trips, 3 two pair, 2 pair, 1 high
     if is_flush and is_straight:
         return (9,(top_straight,))
     if freq == [4,1]:
@@ -65,7 +63,6 @@ def evaluate_5cards(cards):
     return (1, tuple(vals_sorted))
 
 def compare_scores(s1,s2):
-    """1 si s1>s2, -1 si s1<s2, 0 empate."""
     if s1[0] != s2[0]:
         return 1 if s1[0] > s2[0] else -1
     t1,t2 = s1[1], s2[1]
@@ -77,7 +74,6 @@ def compare_scores(s1,s2):
     return 0
 
 def best_score_with_optional_help(final5, helps):
-    """Prueba la mano sin ayuda y todas las sustituciones por una sola ayuda; devuelve la mejor."""
     best = evaluate_5cards(final5)
     for h in helps:
         for i in range(5):
@@ -88,8 +84,6 @@ def best_score_with_optional_help(final5, helps):
     return best
 
 def qualifies_pair_of_AA_or_better(score):
-    """Devuelve True si la mano es >= 'pair of Aces' (pair of Aces O mejor).
-       Es decir: if category > pair OR (category==pair and pair_rank == Ace)"""
     cat = score[0]
     if cat > 2:
         return True
@@ -98,154 +92,176 @@ def qualifies_pair_of_AA_or_better(score):
         return pair_rank == 14
     return False
 
-# ---------- UI: selección por slots y pestañas por palo ----------
-st.title("Calculadora Mata AA — UI mejorada")
-st.markdown("Selecciona la casilla destino (ej. P1-1), luego el palo y la carta. La carta se moverá si ya estaba en otra casilla. Usa hasta 4 jugadores.")
+# ---------- UI: slots por jugador (selección por jugador, no dropdowns) ----------
+st.title("Calculadora Mata AA — Final")
+st.markdown("Interfaz mejorada — selecciona jugador, luego pulsa la carta en la pestaña del palo. Se bloquean duplicados automáticamente. Español.")
 
-# jugadores
-num_players = st.sidebar.selectbox("Número de jugadores", [2,3,4], index=0)
+# Número de jugadores
+num_players = st.sidebar.selectbox("Número de jugadores", options=[2,3,4], index=0)
 
-# generar keys
-p_keys = []
-for p in range(1, num_players+1):
-    p_keys += [f"p{p}_{i}" for i in range(1,5)]
-h_keys = [f"h_{i}'" for i in range(1,4)]
-# initialize session_state
-all_keys = p_keys + h_keys
-for k in all_keys:
+# Inicializar slots en session_state
+slot_keys = []
+for p in range(1,num_players+1):
+    for i in range(1,5):
+        key = f"p{p}_{i}"
+        slot_keys.append(key)
+for i in range(1,4):
+    slot_keys.append(f"h_{i}")
+
+for k in slot_keys:
     if k not in st.session_state:
         st.session_state[k] = ""
 
-# Build slot labels mapping to keys
-slot_labels = []
-for p in range(1,num_players+1):
-    for i in range(1,5):
-        slot_labels.append((f"P{p}-{i}", f"p{p}_{i}"))
-for i in range(1,4):
-    slot_labels.append((f"Help-{i}", f"h_{i}'"))
+# Selector de jugador/slot activo (cíclo por jugador o ayudas)
+st.sidebar.markdown("**Asignar cartas a**")
+target_player = st.sidebar.radio("Selecciona zona", options=[f"Jugador {i}" for i in range(1,num_players+1)] + ["Ayudas"])
+# If player chosen, we'll auto-fill slots in order
+assign_mode = st.sidebar.radio("Modo asignación", options=["Rellenar automáticamente", "Elegir posición específica"])
 
-display_labels = [f"{lab} ({st.session_state[key] or 'vacío'})" for lab,key in slot_labels]
-slot_choice = st.selectbox("Asignar a:", display_labels)
-active_key = slot_labels[display_labels.index(slot_choice)][1]
+if assign_mode == "Elegir posición específica":
+    slot_pos = st.sidebar.selectbox("Selecciona posición", options=[f"P{p}-{i}" for p in range(1,num_players+1) for i in range(1,5)] + [f"Help-{i}" for i in range(1,4)])
+else:
+    slot_pos = None
 
-# helpers for mapping cards -> slots
-def used_card_to_slot_map():
+# utilidad: cartas ya usadas
+def used_map():
     m = {}
-    for k in all_keys:
+    for k in slot_keys:
         v = st.session_state.get(k,"")
         if v:
             m[v] = k
     return m
 
-def assign_card_to_slot(card, target_key):
-    mapping = used_card_to_slot_map()
-    # if target already has card -> unassign
-    if st.session_state.get(target_key,"") == card:
-        st.session_state[target_key] = ""
-        return
-    if card in mapping:
-        prev = mapping[card]
+# función para asignar carta a zona
+def assign_card(card):
+    used = used_map()
+    # if already assigned somewhere else, remove from there
+    if card in used:
+        prev = used[card]
         st.session_state[prev] = ""
-    st.session_state[target_key] = card
+    # determine target slot
+    if slot_pos:
+        target_key = slot_pos.lower().replace('-','_')
+    else:
+        if target_player == "Ayudas":
+            # find first empty help slot
+            for i in range(1,4):
+                key = f"h_{i}"
+                if st.session_state[key] == "":
+                    target_key = key
+                    break
+            else:
+                target_key = None
+        else:
+            pnum = int(target_player.split()[1])
+            # find first empty slot for that player
+            for i in range(1,5):
+                key = f"p{pnum}_{i}"
+                if st.session_state[key] == "":
+                    target_key = key
+                    break
+            else:
+                # if none empty, overwrite last
+                target_key = f"p{pnum}_4"
+    if target_key:
+        st.session_state[target_key] = card
 
-def clear_slot(key):
-    st.session_state[key] = ""
-
-def clear_all_slots():
-    for k in all_keys:
-        st.session_state[k] = ""
-
+# botones acción
 col1,col2,col3 = st.columns([1,1,1])
 with col1:
-    if st.button("Borrar casilla seleccionada"):
-        clear_slot(active_key)
-with col2:
     if st.button("Borrar todo"):
-        clear_all_slots()
-with col3:
-    if st.button("Autocompletar aleatorio"):
-        pool = [c for c in DECK]
+        for k in slot_keys:
+            st.session_state[k] = ""
+with col2:
+    if st.button("Autocompletar (aleatorio)"):
+        pool = DECK.copy()
         random.shuffle(pool)
-        idx=0
-        for k in all_keys:
-            st.session_state[k] = pool[idx]; idx+=1
+        idx = 0
+        for k in slot_keys:
+            st.session_state[k] = pool[idx]; idx += 1
+with col3:
+    if st.button("Limpiar asignaciones (mantener ayudas)"):
+        for k in slot_keys:
+            if k.startswith("p"):
+                st.session_state[k] = ""
 
 st.write("---")
 
-# show selection
-def show_selected_grid():
-    st.markdown("**Selección actual**")
-    for p in range(1,num_players+1):
-        cards = [st.session_state[f"p{p}_{i}"] for i in range(1,5)]
-        cols = st.columns(4)
-        for c,col in zip(cards, cols):
-            with col:
-                if c:
-                    img = os.path.join(IMAGES_DIR, f"{c}.png")
-                    if os.path.isfile(img): col.image(img, width=76)
-                    else: col.write(c)
-                else:
-                    col.write("vacío")
-    st.markdown("**Ayudas**")
-    cols = st.columns(3)
-    for i,col in zip(range(1,4), cols):
-        v = st.session_state.get(f"h_{i}'","")
-        with col:
+# Mostrar selección actual
+st.markdown("### Selección actual")
+for p in range(1,num_players+1):
+    cols = st.columns(4)
+    for i in range(1,5):
+        key = f"p{p}_{i}"
+        with cols[i-1]:
+            v = st.session_state[key]
             if v:
-                img = os.path.join(IMAGES_DIR, f"{v}.png")
-                if os.path.isfile(img): col.image(img, width=70)
-                else: col.write(v)
+                img_path = os.path.join(IMAGES_DIR, f"{v}.png")
+                if os.path.isfile(img_path):
+                    st.image(img_path, width=90)
+                else:
+                    st.write(v)
             else:
-                col.write("vacío")
+                st.write("vacío")
 
-show_selected_grid()
+st.markdown("**Ayudas**")
+cols = st.columns(3)
+for i in range(1,4):
+    key = f"h_{i}"
+    with cols[i-1]:
+        v = st.session_state[key]
+        if v:
+            img_path = os.path.join(IMAGES_DIR, f"{v}.png")
+            if os.path.isfile(img_path): st.image(img_path, width=80)
+            else: st.write(v)
+        else:
+            st.write("vacío")
+
 st.write("---")
 
-# tabs por palo (fixed: zip suit chars con tab objetos)
+# Tabs por palo, selección de cartas
 tabs = st.tabs(["♠ Picas","♥ Corazones","♦ Diamantes","♣ Tréboles"])
 suit_chars = ['s','h','d','c']
 for suit_char, tab in zip(suit_chars, tabs):
     with tab:
-        st.write(f"Palo: {suit_char}")
         cols = st.columns(13)
         for i, rank in enumerate(RANKS):
             card = rank.lower() + suit_char
-            col = cols[i]
-            with col:
+            with cols[i]:
                 img_path = os.path.join(IMAGES_DIR, f"{card}.png")
                 if os.path.isfile(img_path):
-                    col.image(img_path, width=70)
+                    st.image(img_path, width=72)
                 else:
-                    col.write(card)
-                if col.button("Seleccionar", key=f"btn_{card}"):
-                    assign_card_to_slot(card, active_key)
+                    st.write(card)
+                # disable button if card used
+                used = used_map()
+                disabled = card in used
+                if st.button("Seleccionar", key=f"btn_{card}", disabled=disabled):
+                    assign_card(card)
+                    st.experimental_rerun()
 
 st.write("---")
-st.markdown("Selecciona la casilla destino arriba y luego pulsa 'Seleccionar' en la carta deseada.")
 
-# ---------- CÁLCULO ----------
-def calculate_stats(p_cards, helps, exact_threshold=300000):
-    """Si el número de combinaciones es <= exact_threshold hace exacto, si no usa MonteCarlo."""
+# ---------- Cálculo ----------
+def calculate_exact_or_monte(p_cards, helps, exact_threshold=300000):
     used = set([c for lst in p_cards for c in lst] + helps)
     remaining = [c for c in DECK if c not in used]
     k = len(p_cards)
-    # permutations count P(n,k)
     n = len(remaining)
-    # compute permutations count
+    # count permutations P(n,k)
     perm_count = 1
     for i in range(k):
         perm_count *= (n - i)
-    # if small -> exact
     if perm_count <= exact_threshold:
+        # exact
         wins = [0]*k; wins_mata=[0]*k; ties=0; kills=[0]*k; total=0
         for tup in permutations(remaining, k):
             total += 1
             fulls = [p_cards[i] + [tup[i]] for i in range(k)]
             scores = [best_score_with_optional_help(f, helps) for f in fulls]
-            # count kills
             for i,sc in enumerate(scores):
                 if qualifies_pair_of_AA_or_better(sc): kills[i]+=1
-            # determine winner / tie
+            # determine winner
             best_idx = 0; tieflag=False
             for i in range(1,k):
                 c = compare_scores(scores[i], scores[best_idx])
@@ -260,12 +276,11 @@ def calculate_stats(p_cards, helps, exact_threshold=300000):
                 if qualifies_pair_of_AA_or_better(scores[best_idx]):
                     wins_mata[best_idx] += 1
                 else:
-                    # winner didn't qualify -> pot retained (count as tie for mata)
                     ties += 1
         return {"mode":"exact","total":total,"wins":wins,"wins_mata":wins_mata,"ties":ties,"kills":kills}
     else:
-        # Monte Carlo fallback
-        iters = 50000  # ajuste razonable; puedes cambiar
+        # Monte Carlo
+        iters = st.sidebar.number_input("Iteraciones MC", value=40000, min_value=1000, max_value=200000, step=1000)
         wins = [0]*k; wins_mata=[0]*k; ties=0; kills=[0]*k; total=0
         for _ in range(iters):
             tup = random.sample(remaining, k)
@@ -291,26 +306,50 @@ def calculate_stats(p_cards, helps, exact_threshold=300000):
                     ties += 1
         return {"mode":"montecarlo","total":total,"iters":iters,"wins":wins,"wins_mata":wins_mata,"ties":ties,"kills":kills}
 
-# botón calcular
-if st.button("Calcular (1 carta faltante por jugador)"):
-    # recoger cartas
+if st.button("Calcular equities (1 carta faltante por jugador)"):
+    # collect player cards
     p_cards = []
     for p in range(1,num_players+1):
-        lst = [st.session_state[f"p{p}_{i}"] for i in range(1,5) if st.session_state[f"p{p}_{i}"]]
-        if len(lst) != 4:
-            st.error(f"Jugador {p}: faltan cartas (4 requeridas).")
+        lst = [st.session_state[f"p{p}_{i}"] for i in range(1,5)]
+        if "" in lst:
+            st.error(f"Jugador {p}: faltan 4 cartas")
             st.stop()
         p_cards.append(lst)
-    helps = [st.session_state[f"h_{i}'"] for i in range(1,4) if st.session_state[f"h_{i}'"]]
-    if len(helps) != 3:
-        st.error("Faltan ayudas (3 requiridas).")
+    helps = [st.session_state[f"h_{i}"] for i in range(1,4)]
+    if "" in helps:
+        st.error("Faltan 3 ayudas seleccionadas")
         st.stop()
-    with st.spinner("Calculando combinaciones..."):
-        res = calculate_stats(p_cards, helps)
+    with st.spinner("Calculando..."):
+        res = calculate_exact_or_monte(p_cards, helps)
     tot = res["total"]
     st.success(f"Modo: {res['mode']} — total combinaciones: {tot}")
     for i in range(len(p_cards)):
-        st.write(f"Jugador {i+1}: wins = {res['wins'][i]} ({res['wins'][i]/tot*100:.3f}%), wins_mata = {res['wins_mata'][i]} ({res['wins_mata'][i]/tot*100:.3f}%), kills = {res['kills'][i]} ({res['kills'][i]/tot*100:.3f}%)")
-    st.write(f"Empates (o pozo retenido en mataAA): {res['ties']} ({res['ties']/tot*100:.3f}%)")
-    if res["mode"] == "montecarlo":
-        st.info(f"Monte Carlo usado: iteraciones = {res['iters']}. Resultado aproximado.")
+        st.write(f"Jugador {i+1} — Victorias: {res['wins'][i]} ({res['wins'][i]/tot*100:.3f}%), Victorias que matan AA: {res['wins_mata'][i]} ({res['wins_mata'][i]/tot*100:.3f}%), Prob tener ≥AA: {res['kills'][i]} ({res['kills'][i]/tot*100:.3f}%)")
+    st.write(f"Empates/pozo retenido: {res['ties']} ({res['ties']/tot*100:.3f}%)")
+
+    # outs table for player1 (top)
+    st.write("---")
+    st.write("Outs útiles (top cartas para Jugador 1 que más victorias dan):")
+    used = set([c for lst in p_cards for c in lst] + helps)
+    remaining = [c for c in DECK if c not in used]
+    per_card = {}
+    for c1 in remaining:
+        w = 0
+        for others in permutations(remaining, len(p_cards)-1):
+            # build tuple where p1 gets c1 and others assigned in order to p2..pk
+            tup = (c1,) + others
+            fulls = [p_cards[0] + [tup[0]]] + [p_cards[i] + [tup[i]] for i in range(1,len(p_cards))]
+            scores = [best_score_with_optional_help(f, helps) for f in fulls]
+            # winner?
+            best_idx = 0; tieflag=False
+            for i in range(1,len(scores)):
+                c = compare_scores(scores[i], scores[best_idx])
+                if c == 1:
+                    best_idx = i; tieflag=False
+                elif c == 0:
+                    tieflag = True
+            if not tieflag and best_idx == 0:
+                w += 1
+        per_card[c1] = w
+    top = sorted(per_card.items(), key=lambda x: -x[1])[:6]
+    st.table([{"Carta":t[0], "Victorias_vs_todos": t[1]} for t in top])

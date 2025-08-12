@@ -238,8 +238,7 @@ for suit_char, tab in zip(suit_chars, tabs):
                 disabled = card in used
                 if st.button("Seleccionar", key=f"btn_{card}", disabled=disabled):
                     assign_card(card)
-                    st.experimental_rerun()
-
+                    
 st.write("---")
 
 # ---------- Cálculo ----------
@@ -353,3 +352,4 @@ if st.button("Calcular equities (1 carta faltante por jugador)"):
         per_card[c1] = w
     top = sorted(per_card.items(), key=lambda x: -x[1])[:6]
     st.table([{"Carta":t[0], "Victorias_vs_todos": t[1]} for t in top])
+
